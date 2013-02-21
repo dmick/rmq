@@ -1,0 +1,174 @@
+#!/usr/bin/python -s
+
+from __future__ import print_function
+import sys
+import json
+import requests
+import exceptions
+import textwrap
+import os
+
+try:
+    URL=os.environ['TRACKER_URL']
+except:
+    URL="http://tracker.newdream.net/"
+
+debug = False
+
+class MyExc(Exception):
+    """
+    Unknown error
+    """
+
+    def __str__(self):
+        doc = self.__doc__.strip()
+        return ': '.join([doc] + [str(a) for a in self.args])
+
+class InvalidArgument(MyExc):
+    """
+    Invalid argument
+    """
+
+def print_keyname(d, key):
+    if d.has_key(key):
+        val = d[key]['name']
+        print(key[0].upper(), key[1:], ": ", val.encode('ascii', 'backslashreplace'), sep='')
+
+# used for priorities, statuses, etc.
+
+def get_enumeration(url, container_key):
+    d = {}
+    headers = {'content-type':'application/json'}
+    r = requests.get(url, headers=headers)
+    # raise exception on any badness
+    r.raise_for_status()
+    # return is one-element dict; 'container_key' holds an array of 
+    # status dicts.  Put into one returned dict.
+    a = r.json[container_key]
+    for elem in a:
+        # snarf whole dict keyed by 'id'
+        id = elem['id']
+        del elem['id']
+        d[id] = elem
+    if debug:
+        print(d)
+    return d
+
+def get_statuses():
+    return get_enumeration(URL + '/issue_statuses.json', 'issue_statuses')
+
+def get_priorities():
+    return get_enumeration(URL + '/enumerations/issue_priorities.json', 'issue_priorities')
+
+def show(*args):
+    # expect an issue number
+    try:
+        issue = int(args[0][0])
+    except:
+        raise InvalidArgument
+    url = URL + '/issues/%d' % issue + '.json'
+    headers = {'content-type':'application/json'}
+    params = {'project_id':'ceph', 'include':'journals'}
+    r = requests.get(url, params=params, headers=headers)
+    # raise exception on any badness
+    r.raise_for_status()
+    i = r.json['issue']
+    if debug:
+        print(json.dumps(r.json, indent=4))
+    dump_bug(i)
+
+def dump_bug(i):
+    tw = textwrap.TextWrapper()
+    print("Issue: #{}: {}".format(i['id'], i['subject'].encode('ascii', 'backslashreplace')))
+    print_keyname(i, 'status')
+    print_keyname(i, 'category')
+    print_keyname(i, 'priority')
+    print_keyname(i, 'author')
+    print_keyname(i,'assigned_to')
+    if i.has_key('description'):
+        print("Description:")
+        for l in i['description'].encode('ascii', 'backslashreplace').splitlines():
+            print(tw.fill(l))
+        print()
+    cnt=1
+    if i.has_key('journals'):
+        for j in i['journals']:
+            dump_journal(cnt, j, tw)
+            cnt = cnt + 1
+
+def dump_journal(cnt, j, tw):
+    print("Change #", cnt, ":", j['user']['name'], j['created_on'])
+    print("======")
+    for d in j['details']:
+        f = lambda(x): x
+        if d['name'] == 'status_id':
+            print("status: ", end='')
+            f = lambda(x): statuses[int(x)]['name']
+        elif d['name'] == 'priority_id':
+            print("priority: ", end='')
+            f = lambda(x): priorities[int(x)]['name']
+        else:
+            print(d['name'], ": ", end='')
+        (old, new) = (None, None)
+        if d.has_key('old_value'):
+            old=f(d['old_value'])
+        if d.has_key('new_value'):
+            new = f(d['new_value'])
+        if old:
+            print(old, end='')
+        if new:
+            print(' =>', new)
+    if j.has_key('notes'):
+        for l in j['notes'].splitlines():
+            print(tw.fill(l))
+    print()
+
+def list(*args):
+    url = URL + '/issues.json'
+    headers = {'content-type':'application/json'}
+    params = {'limit':'1'}
+    try: 
+        if args[0][0] == 'all':
+            params['status_id'] = '*'
+    except:
+        pass
+    if (debug):
+        print(params)
+    r = requests.get(url, headers=headers, params=params)
+    # raise exception on any badness
+    r.raise_for_status()
+    num_issues = r.json['total_count']
+    offset = 0
+    while num_issues != 0:
+        lim = min(100, num_issues)
+        params['limit'] = repr(lim);
+        params['offset'] = repr(offset);
+        r = requests.get(url, headers=headers, params=params)
+        if debug:
+            print(json.dumps(r.json, indent=4))
+        for i in r.json['issues']:
+            dump_bug(i)
+            print("=======")
+        num_issues = num_issues - lim;
+        offset = offset + lim;
+
+def main():
+    global debug
+    args = sys.argv[1:]
+    if len(args) > 0 and args[0] == '-d':
+        debug = True
+        args.pop(0)
+    statuses = get_statuses()
+    priorities = get_priorities()
+    if len(args) > 0 and args[0] == 'show':
+        show(args[1:])
+    elif len(args) > 0 and args[0] == 'list':
+        list(args[1:])
+    else:
+        print(args)
+        raise exceptions.InvalidArgument
+
+if __name__ == '__main__':
+    main()
+
+
