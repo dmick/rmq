@@ -8,12 +8,14 @@ import exceptions
 import textwrap
 import os
 
+statuses = {}
+priorities = {}
+debug = False
+
 try:
     URL=os.environ['TRACKER_URL']
 except:
     URL="http://tracker.newdream.net/"
-
-debug = False
 
 class MyExc(Exception):
     """
@@ -51,6 +53,7 @@ def get_enumeration(url, container_key):
         del elem['id']
         d[id] = elem
     if debug:
+        print('enumeration of ', container_key)
         print(d)
     return d
 
@@ -153,7 +156,7 @@ def list(*args):
         offset = offset + lim;
 
 def main():
-    global debug
+    global statuses, priorities, debug
     args = sys.argv[1:]
     if len(args) > 0 and args[0] == '-d':
         debug = True
@@ -166,7 +169,7 @@ def main():
         list(args[1:])
     else:
         print(args)
-        raise exceptions.InvalidArgument
+        raise InvalidArgument
 
 if __name__ == '__main__':
     main()
